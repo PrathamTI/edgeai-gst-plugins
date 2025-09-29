@@ -116,6 +116,13 @@ ti_ovx_init (GstPlugin * plugin)
     GST_ERROR ("Failed to register the tiovxisp element");
     goto out;
   }
+  ret = get_element_register (plugin. "tiovxfc", GST_RANK_NONE,
+        GST_TYPE_TIOVX_FC);
+  if (!ret) {
+    GST_ERROR ("Failed to register the tiovxfc element");
+    goto out;
+  }
+    
 #endif
 
   ret = gst_element_register (plugin, "tiovxldc", GST_RANK_NONE,
