@@ -1,5 +1,5 @@
 /*
- * Copyright (c) [2021-2022] Texas Instruments Incorporated
+ * Copyright (c) [2025] Texas Instruments Incorporated
  *
  * All rights reserved not granted herein.
  *
@@ -85,4 +85,4 @@ G_DECLARE_FINAL_TYPE(GstTIOVXFC, gst_tiovx_fc, GST,
                      TIOVX_FC, GstTIOVXMiso)
 
 G_END_DECLS
-#endif /* __GST_TIOVX_ISP_H__ */
+#endif /* __GST_TIOVX_FC_H__ */
