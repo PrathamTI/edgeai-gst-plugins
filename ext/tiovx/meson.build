@@ -47,7 +47,7 @@ gst_tiovx_plugin_headers = [
   'gsttiovxmux.h',
   'gsttiovxpyramid.h',
   'gsttiovxdlcolorconvert.h',
-  gsttiovxfc.c,
+  gsttiovxfc.h,
 ]
 
 if SOC == 'j721e' or SOC == 'am62a' or SOC == 'j722s'
