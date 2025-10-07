@@ -72,16 +72,17 @@
 
 #include "gst-libs/gst/tiovx/gsttiovx.h"
 #include "gst-libs/gst/tiovx/gsttiovxallocator.h"
-#include "gst-libs/gst/tiovx/gsttiovxmiso.h"
+#include "gst-libs/gst/tiovx/gsttiovxsimo.h"
 #include "gst-libs/gst/tiovx/gsttiovxpad.h"
 #include "gst-libs/gst/tiovx/gsttiovxqueueableobject.h"
 #include "gst-libs/gst/tiovx/gsttiovxutils.h"
+#include "gsttiovxmultiscalerpad.h"
 
 #include "tiovx_fc_module.h"
 #include "ti_2a_wrapper.h"
 
 static const char default_tiovx_sensor_name[] = "SENSOR_SONY_IMX219_RPI";
-#define GST_TYPE_TIOVX_ISP_TARGET (gst_tiovx_fc_target_get_type())
+#define GST_TYPE_TIOVX_FC_TARGET (gst_tiovx_fc_target_get_type())
 #define DEFAULT_TIOVX_FC_TARGET TIVX_TARGET_VPAC_FC1_ID
 
 GST_DEBUG_CATEGORY_STATIC (gst_tiovxfc_debug);
@@ -105,9 +106,9 @@ static const gboolean default_bypass_nsf4 = FALSE;
 static const guint default_ee_mode = TIVX_VPAC_VISS_EE_MODE_OFF;
 
 static const int input_param_id = 3;
-static const int output2_param_id = 6;
+static const int output2_param_id = 1;
 #if defined(SOC_AM62A) || defined(SOC_J722S)
-static const int output0_param_id = 4;
+static const int output0_param_id = 1;
 #endif
 static const int ae_awb_result_param_id = 1;
 static const int h3a_stats_param_id = 9;
@@ -147,6 +148,33 @@ gst_tiovx_fc_target_get_type (void)
 }
 
 #define DEFAULT_TIOVX_FC_TARGET TIVX_TARGET_VPAC_FC_ID
+
+/* Interpolation Method definition */
+#define GST_TYPE_TIOVX_FC_INTERPOLATION_METHOD (gst_tiovx_fc_interpolation_method_get_type())
+static GType
+gst_tiovx_fc_interpolation_method_get_type (void)
+{
+  static GType interpolation_method_type = 0;
+
+  static const GEnumValue interpolation_methods[] = {
+    {VX_INTERPOLATION_BILINEAR, "Bilinear", "bilinear"},
+    {VX_INTERPOLATION_NEAREST_NEIGHBOR, "Nearest Neighbor", "nearest-neighbor"},
+    {TIVX_VPAC_MSC_INTERPOLATION_GAUSSIAN_32_PHASE, "Gaussian 32 Phase",
+        "gaussian-32-phase"},
+    {0, NULL, NULL},
+  };
+
+  if (!interpolation_method_type) {
+    interpolation_method_type =
+        g_enum_register_static ("GstTIOVXself->fc_objInterpolationMethod",
+        interpolation_methods);
+  }
+  return interpolation_method_type;
+}
+
+#define DEFAULT_TIOVX_FC_INTERPOLATION_METHOD VX_INTERPOLATION_BILINEAR
+
+
 #define ISS_IMX390_GAIN_TBL_SIZE                (71U)
 
 static const uint16_t gIMX390GainsTable[ISS_IMX390_GAIN_TBL_SIZE][2U] = {
@@ -653,20 +681,6 @@ static const uint32_t gIMX728GainsTable[ISS_IMX728_GAIN_TBL_SIZE][2U] =
 /* TIOVX FC Pad 
 */
 #define GST_TYPE_TIOVX_FC_PAD (gst_tiovx_fc_pad_get_type())
-G_DECLARE_FINAL_TYPE (GstTIOVXFCPad, gst_tiovx_fc_pad,
-    GST_TIOVX, FC_PAD, GstTIOVXMisoPad);
-
-struct _GstTIOVXFCPadClass
-{
-  GstTIOVXMisoPadClass parent_class;
-};
-
-struct _GstTIOVXFCClass
-{
-    GstTIOVXMisoPadClass 
-}
-
-/* Pending: TIOVX FC PAD Defination*/
 
 enum
 {
@@ -698,7 +712,7 @@ enum
 #else
 #define TIOVX_FC_SUPPORTED_FORMATS_SRC "{NV12, GRAY8, GRAY16_LE}"
 #endif
-#define TIOVX_FC_SUPPORTED_FORMATS_SINK "{ NV12, GRAY8, GRAY16_LE }""
+#define TIOVX_FC_SUPPORTED_FORMATS_SINK "{ NV12, GRAY8, GRAY16_LE }"
 #define TIOVX_FC_SUPPORTED_WIDTH "[1 , 8192]"
 #define TIOVX_FC_SUPPORTED_HEIGHT "[1 , 8192]"
 #define TIOVX_FC_SUPPORTED_CHANNELS "[1 , 10]"
@@ -713,7 +727,7 @@ enum
   "video/x-raw(" GST_CAPS_FEATURE_BATCHED_MEMORY "), "      \
   "format = (string) " TIOVX_FC_SUPPORTED_FORMATS_SRC ", " \
   "width = " TIOVX_FC_SUPPORTED_WIDTH ", "                 \
-  "height = " TIOVX_FC_SUPPORTED_HEIGHgst_tiovx_isp_pad_get_typeT ", "               \
+  "height = " TIOVX_FC_SUPPORTED_HEIGHT ", "                \
   "num-channels = " TIOVX_FC_SUPPORTED_CHANNELS
 
 #define TIOVX_FC_STATIC_CAPS_SINK                         \
@@ -746,8 +760,8 @@ static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
 
 struct _GstTIOVXFC
 {
-  GstTIOVXMiso element;
-  gchar *dcc_isp_config_file;
+  GstTIOVXSimo element;
+  gchar *dcc_fc_config_file;
   gchar *sensor_name;
   gint target_id;
   SensorObj sensor_obj;
@@ -762,6 +776,8 @@ struct _GstTIOVXFC
   guint bypass_dwb;
   guint bypass_nsf4;
   guint ee_mode;
+  gint total_height;
+  gint image_height;
 
   GstTIOVXAllocator *user_data_allocator;
 
@@ -776,31 +792,67 @@ struct _GstTIOVXFC
   guint postprocess_iter;
 
   gint interpolation_method;
-  gint target_id;
 
-}
+};
 
 #define gst_tiovx_fc_parent_class parent_class
 
-struct _GstTIOVXFCPadClass
-{
-  GstTIOVXMisoPadClass parent_class;
-};
+/* Function Prototypes */
+
+static const gchar *
+target_id_to_target_name (gint target_id);
+
+static gboolean
+gst_tiovx_fc_release_buffer (GstTIOVXSimo * simo);
+
+static gboolean
+gst_tiovx_fc_deinit_module (GstTIOVXSimo * simo);
+
+static gboolean 
+gst_tiovx_fc_create_graph ( GstTIOVXSimo * simo, vx_context context, 
+    vx_graph graph);
+
+static gboolean 
+gst_tiovx_fc_get_node_info (GstTIOVXSimo * simo,
+    GList * sink_pads_list, GstPad * src_pad, vx_node * node,
+    GList ** queueable_objects);
+
+static gboolean 
+gst_tiovx_fc_configure_module (GstTIOVXSimo * simo);
+
+gst_tiovx_fc_init_module (GstTIOVXSimo * simo,
+    vx_context context, GstTIOVXPad * sink_pads_list, GList * src_pads, GstCaps * sink_caps,
+    GList * src_caps_list, guint num_channels);
+
+static void
+gst_tiovx_fc_set_property(GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec);
+
+static void
+gst_tiovx_fc_get_property(GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec);
+
+static void
+gst_tiovx_fc_get_property(GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec);
+
+static void
+gst_tiovx_fc_finalize (GObject * obj);
 
 
 static void
-gst_tiovx_fc_class_init(GstTIOVXFCClass * kclass)
+gst_tiovx_fc_class_init(GstTIOVXFCClass * klass)
 {
 
   GST_DEBUG_CATEGORY_INIT (gst_tiovxfc_debug, "tiovxfc", 0, "TIOVX FC PLUGIN");
   GST_DEBUG("class_init reached");
   GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
   GstElementClass *gstelement_class = GST_ELEMENT_CLASS (klass);
-  GstTIOVXMisoClass *gsttiovxmiso_class = GST_TIOVX_MISO_CLASS (klass);
+  GstTIOVXSimoClass *gsttiovxsimo_class = GST_TIOVX_SIMO_CLASS (klass);
   GstPadTemplate *src_temp = NULL;
   GstPadTemplate *sink_temp = NULL;
 
-  gst_element_class_set_detail_simple (gstelement_class,
+  gst_element_class_set_details_simple (gstelement_class,
         "TIOVX VISS->MSC FC",
         "Filter",
         "VPAC (VISS->MSC) Flexconnect using the TIOVX Modules API",
@@ -808,12 +860,12 @@ gst_tiovx_fc_class_init(GstTIOVXFCClass * kclass)
 
     src_temp =
       gst_pad_template_new_from_static_pad_template_with_gtype (&src_template,
-      GST_TYPE_TIOVX_MISO_PAD);
+      GST_TYPE_TIOVX_MULTISCALER_PAD);
     gst_element_class_add_pad_template (gstelement_class, src_temp);
 
     sink_temp =
         gst_pad_template_new_from_static_pad_template_with_gtype (&sink_template,
-        GST_TYPE_TIOVX_FC_PAD);
+        GST_TYPE_TIOVX_SIMO);
     gst_element_class_add_pad_template (gstelement_class, sink_temp);
 
     gobject_class->set_property = gst_tiovx_fc_set_property;                
@@ -821,7 +873,7 @@ gst_tiovx_fc_class_init(GstTIOVXFCClass * kclass)
     gobject_class->finalize = GST_DEBUG_FUNCPTR (gst_tiovx_fc_finalize);    
   
   g_object_class_install_property (gobject_class, PROP_DCC_ISP_CONFIG_FILE,
-      g_param_spec_string ("dcc-isp-file", "DCC ISP File",
+      g_param_spec_string ("dcc-fc-isp-file", "DCC FC ISP File",
           "TIOVX DCC tuning binary file for the given image sensor.",
           NULL,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
@@ -844,8 +896,8 @@ gst_tiovx_fc_class_init(GstTIOVXFCClass * kclass)
   g_object_class_install_property (gobject_class, PROP_TARGET,
       g_param_spec_enum ("target", "Target",
           "TIOVX target to use by this element.",
-          GST_TYPE_TIOVX_ISP_TARGET,
-          DEFAULT_TIOVX_ISP_TARGET,
+          GST_TYPE_TIOVX_FC_TARGET,
+          DEFAULT_TIOVX_FC_TARGET,
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS |
           GST_PARAM_MUTABLE_READY));
 
@@ -897,7 +949,7 @@ gst_tiovx_fc_class_init(GstTIOVXFCClass * kclass)
   g_object_class_install_property (gobject_class, PROP_EE_MODE,
       g_param_spec_enum ("ee-mode", "Edge Enhancement mode",
           "Flag to set Edge Enhancement mode.",
-          gst_tiovx_isp_ee_mode_get_type (),
+          gst_tiovx_fc_ee_mode_get_type (),
           default_ee_mode,
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS |
           GST_PARAM_MUTABLE_READY));
@@ -905,53 +957,59 @@ gst_tiovx_fc_class_init(GstTIOVXFCClass * kclass)
   g_object_class_install_property (gobject_class, PROP_TARGET,
       g_param_spec_enum ("target", "Target",
           "TIOVX target to use by this element",
-          GST_TYPE_TIOVX_MULTI_SCALER_TARGET,
-          DEFAULT_TIOVX_MULTI_SCALER_TARGET,
+          GST_TYPE_TIOVX_FC_TARGET,
+          DEFAULT_TIOVX_FC_TARGET,
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_INTERPOLATION_METHOD,
       g_param_spec_enum ("interpolation-method", "Interpolation Method",
           "Interpolation method to use by the scaler",
-          GST_TYPE_TIOVX_MULTI_SCALER_INTERPOLATION_METHOD,
-          DEFAULT_TIOVX_MULTI_SCALER_INTERPOLATION_METHOD,
+          GST_TYPE_TIOVX_FC_INTERPOLATION_METHOD,
+          DEFAULT_TIOVX_FC_INTERPOLATION_METHOD,
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
 
-  gsttiovxmiso_class->init_module =
+  gsttiovxsimo_class->init_module =
       GST_DEBUG_FUNCPTR (gst_tiovx_fc_init_module);
 
-  gsttiovxmiso_class->configue_module = 
+  gsttiovxsimo_class->configure_module = 
       GST_DEBUG_FUNCPTR (gst_tiovx_fc_configure_module);
+
+  gsttiovxsimo_class->release_buffer =
+      GST_DEBUG_FUNCPTR (gst_tiovx_fc_release_buffer);
     
+  gsttiovxsimo_class->get_node_info =
+      GST_DEBUG_FUNCPTR (gst_tiovx_fc_get_node_info);
+
+  gsttiovxsimo_class->create_graph =
+      GST_DEBUG_FUNCPTR (gst_tiovx_fc_create_graph);
+
+  gsttiovxsimo_class->deinit_module =
+      GST_DEBUG_FUNCPTR (gst_tiovx_fc_deinit_module);
+
 }
 
 static gboolean 
-gst_tiovx_fc_configure_module (GstTIOVXMiso * miso)
+gst_tiovx_fc_configure_module (GstTIOVXSimo * simo)
 {
   GstTIOVXFC *self = NULL;
-  gboolean ret = FLASE;
+  gboolean ret = FALSE;
   vx_status status = VX_FAILURE;
   
-  g_return_val_if_fail (miso, FALSE);
+  g_return_val_if_fail (simo, FALSE);
 
-  self = GST_TIOVX_FC (miso);
-
-  ret = gst_tiovx_fc_allocate_user_data_objects (self); // pending
-  if(!ret){
-    GST_ERROR_OBJECT (self, "Unable to allocate the user data objects");
-    goto out;
-  }
+  self = GST_TIOVX_FC (simo);
 
   GST_DEBUG_OBJECT (self, "Update filter coeffs");
-  status = tiovx_fc_update_module_update_filter_coeffs (&self->obj);
+  status = tiovx_fc_update_module_update_filter_coeffs (&self->fc_obj);
   if (VX_SUCCESS != status){
-    GST_ERROR_OBJECTS (self,
+    GST_ERROR_OBJECT (self,
       "Module configure filter coefficients failed with error: %d", status);
     ret = FALSE;
     goto out;
   }
 
   GST_DEBUG_OBJECT (self, "Update crop params");
-  status = tiovx_fc_module_update_crop_params (&self->obj);
+  status = tiovx_fc_module_update_crop_params (&self->fc_obj);
   if (VX_SUCCESS != status) {
     GST_ERROR_OBJECT (self,
         "Module update crop params failed with error: %d", status);
@@ -960,7 +1018,7 @@ gst_tiovx_fc_configure_module (GstTIOVXMiso * miso)
   }
 
   GST_DEBUG_OBJECT (self, "Update input params");
-  status = tiovx_fc_module_update_input_params (&self->obj);
+  status = tiovx_fc_module_update_input_params (&self->fc_obj);
   if (VX_SUCCESS != status) {
     GST_ERROR_OBJECT (self,
         "Module update input params failed with error: %d", status);
@@ -968,11 +1026,12 @@ gst_tiovx_fc_configure_module (GstTIOVXMiso * miso)
     goto out;
   }
 
-
+out: 
+  return ret;
 }
 
 static GType
-gst_tiovx_isp_ee_mode_get_type (void)
+gst_tiovx_fc_ee_mode_get_type (void)
 {
   static GType ee_mode_type = 0;
 
@@ -984,17 +1043,17 @@ gst_tiovx_isp_ee_mode_get_type (void)
   };
 
   if (!ee_mode_type) {
-    ee_mode_type = g_enum_register_static ("GstTIOVXISPEEModes", targets);
+    ee_mode_type = g_enum_register_static ("GstTIOVXFCEEModes", targets);
   }
   return ee_mode_type;
 }
 
 static void
-gst_tiovx_fc_init (GstTIOVXISP * self)
+gst_tiovx_fc_init (GstTIOVXFC * self)
 {
   gint i = 0;
 
-  self->dcc_isp_config_file = NULL;
+  self->dcc_fc_config_file = NULL;
   self->sensor_name = g_strdup (default_tiovx_sensor_name);
 
   self->num_exposures = default_num_exposures;
@@ -1021,13 +1080,13 @@ gst_tiovx_fc_init (GstTIOVXISP * self)
   }
   
   self->target_id = DEFAULT_TIOVX_FC_TARGET;
-  // self->interpolation_method = DEFAULT_TIOVX_MULTI_SCALER_INTERPOLATION_METHOD;
+  self->interpolation_method = DEFAULT_TIOVX_FC_INTERPOLATION_METHOD;
 
 }
 
 
 static gboolean 
-gst_tiovx_fc_create_graph ( GstTIOVXMiso * miso, vx_content context, 
+gst_tiovx_fc_create_graph ( GstTIOVXSimo * simo, vx_context context, 
     vx_graph graph)
 {
   GstTIOVXFC *self = NULL;
@@ -1035,18 +1094,18 @@ gst_tiovx_fc_create_graph ( GstTIOVXMiso * miso, vx_content context,
   gboolean ret = FALSE;
   const gchar *target = NULL;
 
-  g_return_val_if_fail (miso, FALSE);
+  g_return_val_if_fail (simo, FALSE);
   g_return_val_if_fail (context, FALSE);
   g_return_val_if_fail (graph, FALSE);
 
-  self = GST_TIOVX_FC (miso);
+  self = GST_TIOVX_FC (simo);
 
   GST_OBJECT_LOCK (GST_OBJECT (self));
   target = target_id_to_target_name (self->target_id);
   GST_OBJECT_UNLOCK (GST_OBJECT (self));
 
   GST_DEBUG_OBJECT (self, "Creating FC graph");
-  status = tiovx_fc_module_create (graph, &self->fc_obj, NULL, NULL, target)
+  status = tiovx_fc_module_create (graph, &self->fc_obj, NULL, NULL, target);
 
   if (VX_SUCCESS != status) {
     GST_ERROR_OBJECT (self, "Create graph failed with error: %d", status);
@@ -1062,7 +1121,7 @@ out:
 }
 
 static GList *
-gst_tiovx_fc_fixate_caps (GstTIOVXMiso * self,
+gst_tiovx_fc_fixate_caps (GstTIOVXSimo * simo,
 GstCaps * sink_caps, GList * src_caps_list)
 {
   GstStructure *sink_structure = NULL;
@@ -1077,25 +1136,25 @@ GstCaps * sink_caps, GList * src_caps_list)
   const gchar *output_format = NULL;
   const GValue *vframerate = NULL;
 
-  g_return_val_if_fail (self, NULL);
+  g_return_val_if_fail (simo, NULL);
   g_return_val_if_fail (sink_caps, NULL);
   g_return_val_if_fail (gst_caps_is_fixed (sink_caps), NULL);
   g_return_val_if_fail (src_caps_list, NULL);
   
-  GST_DEBUG_OBJECT (self, "Fixating caps");
+  GST_DEBUG_OBJECT (simo, "Fixating caps");
   
-  GST_DEBUG_OBJECT (self, "Fixating src caps from sink caps %" GST_PTR_FORMAT,
+  GST_DEBUG_OBJECT (simo, "Fixating src caps from sink caps %" GST_PTR_FORMAT,
   sink_caps);
   
   sink_structure = gst_caps_get_structure (sink_caps, 0);
 
   if (!gst_structure_get_int (sink_structure, "width", &width)) {
-  GST_ERROR_OBJECT (self, "Width is missing in sink caps");
+  GST_ERROR_OBJECT (simo, "Width is missing in sink caps");
   return NULL;
   }
   
   if (!gst_structure_get_int (sink_structure, "height", &height)) {
-  GST_ERROR_OBJECT (self, "Height is missing in sink caps");
+  GST_ERROR_OBJECT (simo, "Height is missing in sink caps");
   return NULL;
   }
   
@@ -1106,14 +1165,13 @@ GstCaps * sink_caps, GList * src_caps_list)
   
   input_format = gst_structure_get_string (sink_structure, "format");
   if (NULL == input_format) {
-  GST_ERROR_OBJECT (self, "Format is missing in sink caps");
+  GST_ERROR_OBJECT (simo, "Format is missing in sink caps");
   return NULL;
   }
   
   vframerate = gst_structure_get_value (sink_structure, "framerate");
-  
   if (NULL == vframerate) {
-  GST_ERROR_OBJECT (self, "Framerate is missing in sink caps");
+  GST_ERROR_OBJECT (simo, "Framerate is missing in sink caps");
   return NULL;
   }
   
@@ -1148,23 +1206,23 @@ GstCaps * sink_caps, GList * src_caps_list)
 
     gst_structure_set (new_st, "format", G_TYPE_STRING, output_format, NULL);
 
-    GST_DEBUG_OBJECT (simo, "Fixated %" GST_PTR_FORMAT " into %" GST_PTR_FORMAT,
+    GST_DEBUG_OBJECT (self, "Fixated %" GST_PTR_FORMAT " into %" GST_PTR_FORMAT,
         src_caps, new_caps);
 
     result_caps_list = g_list_append (result_caps_list, new_caps); 
   }
   return result_caps_list;
 }
-static gboolean
-gst_tiovx_fc_deinit_module (GstTIOVXMISO * miso)
+
+gst_tiovx_fc_deinit_module (GstTIOVXSimo * simo)
 {
   GstTIOVXFC *self = NULL;
   vx_status status = VX_FAILURE;
   gboolean ret = FALSE;
   
-  g_return_val_if_fail (miso, FALSE);
+  g_return_val_if_fail (simo, FALSE);
   
-  self = GST_TIOVX_FC (miso);
+  self = GST_TIOVX_FC (simo);
   
   /* Delete graph */
   status = tiovx_fc_module_delete (&self->fc_obj);
@@ -1205,27 +1263,34 @@ target_id_to_target_name (gint target_id)
 }
 
 static void 
-gst_tiovx_fc_init_module (GstTIOVXMiso * miso,
-    vx_context context, GList * sink_pads_list,
-    guint num_channels)
+gst_tiovx_fc_init_module (GstTIOVXSimo * simo,
+    vx_context context, GstTIOVXPad * sink_pads_list, GList * src_pads, GstCaps * sink_caps,
+    GList * src_caps_list, guint num_channels)
 {
   GstTIOVXFC *self = NULL;
+  GList *l = NULL;
   GstVideoInfo in_info = { };
   GstVideoInfo out_info = { };
   gboolean ret = FALSE;
   vx_status status = VX_FAILURE;
-  GstCaps *sink_caps = NULL;
-  GstCaps *src_caps = NULL;
-  GstStructure *sink_caps_st = NULL;
   const gchar *format_str = NULL;
+  GstStructure *sink_caps_st = NULL;
+
   
-  g_return_val_if_fail (miso, FALSE);
+  g_return_val_if_fail (simo, FALSE);
   g_return_val_if_fail (context, FALSE);
   g_return_val_if_fail (sink_pads_list, FALSE);
-  g_return_val_if_fail (src_pad, FALSE);
+  g_return_val_if_fail (src_pads, FALSE);
+  g_return_val_if_fail (sink_caps, FALSE);
+  g_return_val_if_fail (src_caps_list, FALSE);
 
-  self = GST_TIOVX_FC (miso);
+  self = GST_TIOVX_FC (simo);
   
+  tiovx_querry_sensor (&self->sensor_obj);
+  tiovx_init_sensor (&self->sensor_obj, self->sensor_name);
+  self->sensor_obj.num_cameras_enabled = num_channels;
+  self->sensor_obj.sensor_wdr_enabled = self->wdr_enabled;
+
   /* Get caps from the sink pad */
   sink_caps = gst_pad_get_current_caps (GST_PAD (sink_pads_list->data));
   if (NULL == sink_caps) {
@@ -1254,40 +1319,165 @@ gst_tiovx_fc_init_module (GstTIOVXMiso * miso,
   self->total_height = GST_VIDEO_INFO_HEIGHT (&in_info);
   self->image_height = self->total_height - self->meta_height_before - self->meta_height_after;
 
-  /* Initialize FlexConnect module parameters */
-  self->fc_obj.input.width = GST_VIDEO_INFO_WIDTH (&in_info);
-  self->fc_obj.input.height = self->image_height;
-  self->fc_obj.input.bufq_depth = 1;
-  
+  self->num_channels = num_channels;
+  self->fc_obj.viss_input.bufq_depth = 1;
+
+  self->fc_obj.viss_input.params.num_exposures = self->num_exposures;
+  self->fc_obj.viss_input.params.line_interleaved = self->line_interleaved;
+  self->fc_obj.viss_input.params.format[0].msb = self->format_msb;
+  self->fc_obj.viss_input.params.meta_height_before = self->meta_height_before;
+  self->fc_obj.viss_input.params.meta_height_after = self->meta_height_after;
+  self->fc_obj.viss_input.params.width = GST_VIDEO_INFO_WIDTH (&in_info);
+  self->fc_obj.viss_input.params.height = GST_VIDEO_INFO_HEIGHT (&in_info)
+                                       - self->meta_height_before
+                                       - self->meta_height_after;
+
   format_str = gst_structure_get_string (sink_caps_st, "format");
+
   if (NULL == format_str) {
     GST_ERROR_OBJECT (self, "Format is missing in sink caps");
     goto out;
   }
   
-  /* Determine input format */
-  self->fc_obj.input.color_format = gst_format_to_vx_format (in_info.finfo->format);
-  
-  /* Get source caps */
-  src_caps = gst_pad_get_current_caps (GST_PAD (src_pad));
-  if (!gst_video_info_from_caps (&out_info, src_caps)) {
-    GST_ERROR_OBJECT (self, "Failed to get info from output caps: %" GST_PTR_FORMAT, 
-        src_caps);
+  if ((g_strcmp0 (format_str, "bggr16") == 0)
+      || (g_strcmp0 (format_str, "gbrg16") == 0)
+      || (g_strcmp0 (format_str, "grbg16") == 0)
+      || (g_strcmp0 (format_str, "rggb16") == 0)
+      || (g_strcmp0 (format_str, "bggr10") == 0)
+      || (g_strcmp0 (format_str, "gbrg10") == 0)
+      || (g_strcmp0 (format_str, "grbg10") == 0)
+      || (g_strcmp0 (format_str, "rggb10") == 0)
+      || (g_strcmp0 (format_str, "rggi10") == 0)
+      || (g_strcmp0 (format_str, "grig10") == 0)
+      || (g_strcmp0 (format_str, "bggi10") == 0)
+      || (g_strcmp0 (format_str, "gbig10") == 0)
+      || (g_strcmp0 (format_str, "girg10") == 0)
+      || (g_strcmp0 (format_str, "iggr10") == 0)
+      || (g_strcmp0 (format_str, "gibg10") == 0)
+      || (g_strcmp0 (format_str, "iggb10") == 0)
+      || (g_strcmp0 (format_str, "bggr12") == 0)
+      || (g_strcmp0 (format_str, "gbrg12") == 0)
+      || (g_strcmp0 (format_str, "grbg12") == 0)
+      || (g_strcmp0 (format_str, "rggb12") == 0)
+      ) {
+    self->fc_obj.viss_input.params.format[0].pixel_container =
+        TIVX_RAW_IMAGE_16_BIT;
+  } else if ((g_strcmp0 (format_str, "bggr") == 0)
+      || (g_strcmp0 (format_str, "gbrg") == 0)
+      || (g_strcmp0 (format_str, "grbg") == 0)
+      || (g_strcmp0 (format_str, "rggb") == 0)
+      ) {
+    self->fc_obj.viss_input.params.format[0].pixel_container =
+        TIVX_RAW_IMAGE_8_BIT;
+  } else {
+    GST_ERROR_OBJECT (self, "Couldn't determine pixel container form caps");
     goto out;
   }
-  
+
+  GST_INFO_OBJECT (self,
+      "Input parameters:\n"
+      "\tWidth: %d\n"
+      "\tHeight: %d\n"
+      "\tPool size: %d\n"
+      "\tNum exposures: %d\n"
+      "\tLines interleaved: %d\n"
+      "\tFormat pixel container: 0x%x\n"
+      "\tFormat MSB: %d\n"
+      "\tMeta height before: %d\n"
+      "\tMeta height after: %d",
+      self->fc_obj.viss_input.params.width,
+      self->fc_obj.viss_input.params.height,
+      self->fc_obj.viss_input.bufq_depth,
+      self->fc_obj.viss_input.params.num_exposures,
+      self->fc_obj.viss_input.params.line_interleaved,
+      self->fc_obj.viss_input.params.format[0].pixel_container,
+      self->fc_obj.viss_input.params.format[0].msb,
+      self->fc_obj.viss_input.params.meta_height_before,
+      self->fc_obj.viss_input.params.meta_height_after);
+  /* Initialize the output parameters */
+  for (l = src_caps_list; l != NULL; l = l->next) {
+    GstCaps *src_caps = (GstCaps *) l->data;
+    GstVideoInfo out_info = { };
+    gint i = g_list_position (src_caps_list, l);
+
+    if (!gst_video_info_from_caps (&out_info, src_caps)) {
+      GST_ERROR_OBJECT (self, "Failed to get info from caps: %"
+          GST_PTR_FORMAT, src_caps);
+      ret = FALSE;
+      goto out;
+    }
+
+    self->fc_obj->output[i].width = GST_VIDEO_INFO_WIDTH (&out_info);
+    self->fc_obj->output[i].height = GST_VIDEO_INFO_HEIGHT (&out_info);
+    self->fc_obj->output[i].color_format =
+        gst_format_to_vx_format (out_info.finfo->format);
+    self->fc_obj->output[i].bufq_depth = 1;
+    /* TODO: Improve this logic. We need to retrieve the index from the GstTIOVXPad */
+    self->fc_obj->output[i].graph_parameter_index = i + 1;
+
+    GST_INFO_OBJECT (self,
+        "Output %d parameters: \n  Width: %d \n  Height: %d \n  Pool size: %d",
+        i, self->fc_obj->output[i].width, self->fc_obj->output[i].height,
+        self->fc_obj->output[i].bufq_depth);
+  }
+
+  for (l = src_pads; l != NULL; l = l->next) {
+    GstTIOVXself->fc_objPad *src_pad = (GstTIOVXself->fc_objPad *) l->data;
+    gint i = g_list_position (src_pads, l);
+
+    if (src_pad->roi_width == 0) {
+      src_pad->roi_width = self->fc_obj->input.width - src_pad->roi_startx;
+    }
+
+    if (src_pad->roi_height == 0) {
+      src_pad->roi_height = self->fc_obj->input.height - src_pad->roi_starty;
+    }
+
+    if (src_pad->roi_startx + src_pad->roi_width > self->fc_obj->input.width) {
+      GST_ERROR_OBJECT (self, "ROI width exceeds the input image");
+      ret = FALSE;
+      goto out;
+    }
+
+    if (src_pad->roi_starty + src_pad->roi_height > self->fc_obj->input.height) {
+      GST_ERROR_OBJECT (self, "ROI height exceeds the input image");
+      ret = FALSE;
+      goto out;
+    }
+
+    if (self->fc_obj->output[i].width > src_pad->roi_width ||
+            self->fc_obj->output[i].height > src_pad->roi_height) {
+      GST_ERROR_OBJECT (self, "self->fc_obj does not support upscaling");
+      ret = FALSE;
+      goto out;
+    }
+
+    if (self->fc_obj->output[i].width < src_pad->roi_width/4 ||
+            self->fc_obj->output[i].height < src_pad->roi_height/4) {
+      GST_ERROR_OBJECT (self,
+              "self->fc_obj does not support downscaling by a factor > 4");
+      ret = FALSE;
+      goto out;
+    }
+
+    self->fc_obj->msc_crop_params[i].crop_start_x = src_pad->roi_startx;
+    self->fc_obj->msc_crop_params[i].crop_start_y = src_pad->roi_starty;
+    self->fc_obj->msc_crop_params[i].crop_width = src_pad->roi_width;
+    self->fc_obj->msc_crop_params[i].crop_height = src_pad->roi_height;
+  }
+
 #if defined(SOC_AM62A) || defined(SOC_J722S)
   if (NULL == g_strrstr (format_str, "i"))
-    self->viss_obj.params.bypass_pcid = 1;
+    self->fc_obj.fc_params.tivxVissPrms.bypass_pcid = 1;
   else
-    self->viss_obj.params.bypass_pcid = 0;
+    self->fc_obj.fc_params.tivxVissPrms.bypass_pcid = 0;
 
   if (out_info.finfo->format == GST_VIDEO_FORMAT_NV12) {
-    self->viss_obj.params.enable_ir_op = TIVX_VPAC_VISS_IR_DISABLE;
-    self->viss_obj.params.enable_bayer_op = TIVX_VPAC_VISS_BAYER_ENABLE;
+    self->fc_obj.fc_params.tivxVissPrms.enable_ir_op = TIVX_VPAC_VISS_IR_DISABLE;
+    self->fc_obj.fc_params.tivxVissPrms.enable_bayer_op = TIVX_VPAC_VISS_BAYER_ENABLE;
   } else if (out_info.finfo->format == GST_VIDEO_FORMAT_GRAY8) {
-    self->viss_obj.params.enable_ir_op = TIVX_VPAC_VISS_IR_ENABLE;
-    self->viss_obj.params.enable_bayer_op = TIVX_VPAC_VISS_BAYER_DISABLE;
+    self->fc_obj.fc_params.tivxVissPrms.enable_ir_op = TIVX_VPAC_VISS_IR_ENABLE;
+    self->fc_obj.fc_params.tivxVissPrms.enable_bayer_op = TIVX_VPAC_VISS_BAYER_DISABLE;
   } else {
     GST_ERROR_OBJECT (self, "Unsupported Src format %s",
         gst_video_format_to_string (out_info.finfo->format));
@@ -1295,15 +1485,15 @@ gst_tiovx_fc_init_module (GstTIOVXMiso * miso,
   }
 
   /* Apply processing settings */
-self->fc_obj.params.viss_params.bypass_cac = self->bypass_cac;
-self->fc_obj.params.viss_params.bypass_dwb = self->bypass_dwb;
-self->fc_obj.params.viss_params.bypass_nsf4 = self->bypass_nsf4;
-self->fc_obj.params.viss_params.fcp[0].ee_mode = self->ee_mode;
+self->fc_obj.fc_params.tivxVissPrms.bypass_cac = self->bypass_cac;
+self->fc_obj.fc_params.tivxVissPrms.bypass_dwb = self->bypass_dwb;
+self->fc_obj.fc_params.tivxVissPrms.bypass_nsf4 = self->bypass_nsf4;
+self->fc_obj.fc_params.tivxVissPrms.fcp[0].ee_mode = self->ee_mode;
 
-self->fc_obj.params.msc_params.interpolation_method = self->interpolation_method;
-self->fc_obj.params.msc_params.num_outputs = 1;
+self->fc_obj.interpolation_method = self->interpolation_method;
+self->fc_obj.msc_num_outputs = 10;
 
-if (self->fc_obj.params.viss_params.enable_ir_op) {
+if (self->fc_obj.fc_params.tivxVissPrms.enable_ir_op) {
     /* For IR operation */
     
     self->fc_obj.viss_output_select[0] = TIOVX_FC_MODULE_OUTPUT_NA;
@@ -1322,17 +1512,14 @@ if (self->fc_obj.params.viss_params.enable_ir_op) {
     self->fc_obj.msc_output[0].height = GST_VIDEO_INFO_HEIGHT(&out_info);
     self->fc_obj.msc_output[0].color_format = gst_format_to_vx_format(out_info.finfo->format);
     self->fc_obj.msc_output[0].bufq_depth = 1;
-    
-    // /* Set up special connection between VISS IR output and MSC input */
-    // self->fc_obj.params.viss_msc_io_config.route_ir_to_msc = 1;
-    
+  
     GST_INFO_OBJECT(self, 
                   "FlexConnect IR output parameters:\n"
                   "\tWidth: %d\n"
                   "\tHeight: %d\n", 
                   self->fc_obj.msc_output[0].width, 
                   self->fc_obj.msc_output[0].height);
-} else if (self->fc_obj.params.viss_params.enable_bayer_op) 
+} else if (self->fc_obj.fc_params.tivxVissPrms.enable_bayer_op) 
 #endif
 {
     /* For Bayer/Color operation */
@@ -1353,57 +1540,16 @@ if (self->fc_obj.params.viss_params.enable_ir_op) {
     self->fc_obj.msc_output[0].height = GST_VIDEO_INFO_HEIGHT(&out_info);
     self->fc_obj.msc_output[0].color_format = gst_format_to_vx_format(out_info.finfo->format);
     self->fc_obj.msc_output[0].bufq_depth = 1;
-    
-    /* Configure connection between VISS Bayer output and MSC input */
-    self->fc_obj.params.viss_msc_io_config.viss_out_to_msc_in = 2; /* Use VISS output2 as input to MSC */
-    
-    GST_INFO_OBJECT(self, 
-                  "FlexConnect Color output parameters:\n"
-                  "\tWidth: %d\n"
-                  "\tHeight: %d\n", 
-                  self->fc_obj.msc_output[0].width, 
-                  self->fc_obj.msc_output[0].height);
-}
-  /* Configure crop parameters for metadata */
-  self->fc_obj.crop_params.crop_start_x = 0;
-  self->fc_obj.crop_params.crop_start_y = self->meta_height_before;
-  self->fc_obj.crop_params.crop_width = self->fc_obj.input.width;
-  self->fc_obj.crop_params.crop_height = self->image_height;
-  
+
+}  
   /* Set interpolation method */
   GST_OBJECT_LOCK (GST_OBJECT (self));
   self->fc_obj.interpolation_method = self->interpolation_method;
   GST_OBJECT_UNLOCK (GST_OBJECT (self));
   
-  /* Log the configuration */
-  GST_INFO_OBJECT (self,
-      "FlexConnect configuration:\n"
-      "  Input:\n"
-      "    Width: %d\n"
-      "    Height: %d (Total: %d, Meta before: %d, Meta after: %d)\n"
-      "    Format: %d\n"
-      "  Output:\n"
-      "    Width: %d\n"
-      "    Height: %d\n"
-      "    Format: %d\n"
-      "  Crop:\n"
-      "    Start X: %d\n"interpolation_method
-      "    Start Y: %d\n"
-      "    Width: %d\n"
-      "    Height: %d\n"
-      "  Interpolation Method: %d",
-      self->fc_obj.input.width, self->fc_obj.input.height, self->total_height,
-      self->meta_height_before, self->meta_height_after,
-      self->fc_obj.input.color_format,
-      self->fc_obj.output.width, self->fc_obj.output.height,
-      self->fc_obj.output.color_format,
-      self->fc_obj.crop_params.crop_start_x, self->fc_obj.crop_params.crop_start_y,
-      self->fc_obj.crop_params.crop_width, self->fc_obj.crop_params.crop_height,
-      self->fc_obj.interpolation_method);
-  
   /* Initialize the FlexConnect module */
   GST_INFO_OBJECT (self, "Initializing FlexConnect module");
-  status = tiovx_fc_module_init (context, &self->fc_obj);
+  status = tiovx_fc_module_init (context, &self->fc_obj, &self->sensor_obj);
   if (VX_SUCCESS != status) {
     GST_ERROR_OBJECT (self, "Module init failed with error: %d", status);
     goto out;
@@ -1422,15 +1568,15 @@ out:
 }
 
 static gboolean
-gst_tiovx_isp_release_buffer (GstTIOVXMiso * miso)
+gst_tiovx_fc_release_buffer (GstTIOVXSimo * simo)
 {
-  GstTIOVXISP *self = NULL;
+  GstTIOVXFC *self = NULL;
   vx_status status = VX_FAILURE;
   gboolean ret = FALSE;
 
-  g_return_val_if_fail (miso, FALSE);
+  g_return_val_if_fail (simo, FALSE);
 
-  self = GST_TIOVX_ISP (miso);
+  self = GST_TIOVX_ISP (simo);
 
   GST_DEBUG_OBJECT (self, "Release buffer ISP");
   status = tiovx_fc_module_release_buffers (&self->fc_obj);
@@ -1447,53 +1593,37 @@ out:
 }
 
 static gboolean 
-gst_tiovx_isp_get_node_info (GstTIOVXMiso * miso,
-    GList * sink_pads_list, GstPad * src_pad, vx_node * node,
-    GList ** queueable_objects)
+gst_tiovx_fc_get_node_info (GstTIOVXSimo * simo, vx_node * node,
+    GstTIOVXPad * sink_pad, GList * src_pads, GList ** queueable_objects)
 {
 
   GstTIOVXFC *self = NULL;
   GList *l = NULL;
   gint i = 0;
   
-  g_return_val_if_fail (miso, FALSE);
+  g_return_val_if_fail (simo, FALSE);
   g_return_val_if_fail (sink_pads_list, FALSE);
   g_return_val_if_fail (src_pad, FALSE);
   
-  self = GST_TIOVX_FC (miso);
+  self = GST_TIOVX_FC (simo);
   
   *node = self->fc_obj.node;
-  
-  /* Set input parameters for all sink pads */
-  for (l = sink_pads_list, i = 0; l != NULL; l = g_list_next (l), i++) {
-    GstTIOVXMisoPad *sink_pad = (GstTIOVXMisoPad *) l->data;
-    
-    if (0 == i) {
-      /* For first pad, use the direct handle */
-      gst_tiovx_miso_pad_set_params (sink_pad,
-          NULL, (vx_reference *) &self->fc_obj.input.image_handle[i],
-          0, input_param_id, 0);
-    } else {
-      /* For additional pads, get and store object array items */
-      if (self->input_references[i]) {
-        vxReleaseReference (&self->input_references[i]);
-      }
-      
-      self->input_references[i] = vxGetObjectArrayItem (self->fc_obj.input.arr[0], i);
-      
-      gst_tiovx_miso_pad_set_params (sink_pad,
-          NULL, (vx_reference *) &self->input_references,
-          -1, -1, 0);
-    }
-  
-  /* Set output parameters */
-  gst_tiovx_miso_pad_set_params (GST_TIOVX_MISO_PAD (src_pad),
-      self->fc_obj.msc_output[i].arr[0],
-      (vx_reference *) &self->fc_obj.msc_output[i].image_handle[0],
-      1, output2_param_id, 0);
-  
+ /* Set input parameters */
+  gst_tiovx_pad_set_params (sink_pad,
+      self->obj.input.arr[0], (vx_reference) self->obj.input.image_handle[0],
+      self->obj.input.graph_parameter_index, input_param_id);
+
+  for (l = src_pads; l != NULL; l = l->next) {
+    GstTIOVXPad *src_pad = (GstTIOVXPad *) l->data;
+    gint i = g_list_position (src_pads, l);
+
+    /* Set output parameters */
+    gst_tiovx_pad_set_params (src_pad,
+        self->obj.output[i].arr[0],
+        (vx_reference) self->obj.output[i].image_handle[0],
+        self->obj.output[i].graph_parameter_index, output2_param_id + i);
   }
-  
+
   return TRUE;
 }
 
@@ -1501,15 +1631,15 @@ static void
 gst_tiovx_fc_set_property(GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec)
 {
-  GstTIOVXISP *self = GST_TIOVX_ISP (object);
+  GstTIOVXFC *self = GST_TIOVX_ISP (object);
 
   GST_LOG_OBJECT (self, "set_property");
 
   GST_OBJECT_LOCK (self);
   switch (prop_id) {
-    case PROP_D CC_ISP_CONFIG_FILE:
-      g_free (self->dcc_isp_config_file);
-      self->dcc_isp_config_file = g_value_dup_string (value);
+    case PROP_DCC_ISP_CONFIG_FILE:
+      g_free (self->dcc_fc_config_file);
+      self->dcc_fc_config_file = g_value_dup_string (value);
       break;
     case PROP_SENSOR_NAME:
       g_free (self->sensor_name);
@@ -1542,9 +1672,6 @@ gst_tiovx_fc_set_property(GObject * object, guint prop_id,
     case PROP_EE_MODE:
       self->ee_mode = g_value_get_enum (value);
       break;
-    case PROP_TARGET:
-      self->target_id = g_value_get_enum (value);
-      break;
     case PROP_INTERPOLATION_METHOD:
       self->interpolation_method = g_value_get_enum (value);
       break;
@@ -1566,7 +1693,7 @@ gst_tiovx_fc_get_property(GObject * object, guint prop_id,
   GST_OBJECT_LOCK (self);
   switch (prop_id) {
     case PROP_DCC_ISP_CONFIG_FILE:
-      g_value_set_string (value, self->dcc_isp_config_file);
+      g_value_set_string (value, self->dcc_fc_config_file);
       break;
     case PROP_SENSOR_NAME:
       g_value_set_string (value, self->sensor_name);
@@ -1598,9 +1725,6 @@ gst_tiovx_fc_get_property(GObject * object, guint prop_id,
     case PROP_EE_MODE:
       g_value_set_enum (value, self->ee_mode);
       break;
-    case PROP_TARGET:
-      g_value_set_enum (value, self->target_id);
-      break;
     case PROP_INTERPOLATION_METHOD:
       g_value_set_enum (value, self->interpolation_method);
       break;
@@ -1608,19 +1732,19 @@ gst_tiovx_fc_get_property(GObject * object, guint prop_id,
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
   }
-  GST_OBJECT_UNLOCK (self)
+  GST_OBJECT_UNLOCK (self);
 }
 
 static void
 gst_tiovx_fc_finalize (GObject * obj)
 {
-  GstTIOVXISP *self = GST_TIOVX_ISP (obj);
+  GstTIOVXFC *self = GST_TIOVX_ISP (obj);
   gint i = 0;
 
   GST_LOG_OBJECT (self, 'finalise');
 
-  g_free (self->dcc_isp_config_file)
-  self->dcc_isp_config_file = NULL;
+  g_free (self->dcc_fc_config_file);
+  self->dcc_fc_config_file = NULL;
   g_free (self->sensor_name);
   self->sensor_name = NULL;
 
