@@ -1061,6 +1061,100 @@ out:
   return ret;
 }
 
+static GList *
+gst_tiovx_fc_fixate_caps (GstTIOVXMiso * self,
+GstCaps * sink_caps, GList * src_caps_list)
+{
+  GstStructure *sink_structure = NULL;
+  GList *result_caps_list = NULL;
+  GList *l = NULL;
+  gint width = 0;
+  gint height = 0;
+  gint meta_height_before = 0;
+  gint meta_height_after = 0;
+  
+  const gchar *input_format = NULL;
+  const gchar *output_format = NULL;
+  const GValue *vframerate = NULL;
+
+  g_return_val_if_fail (self, NULL);
+  g_return_val_if_fail (sink_caps, NULL);
+  g_return_val_if_fail (gst_caps_is_fixed (sink_caps), NULL);
+  g_return_val_if_fail (src_caps_list, NULL);
+  
+  GST_DEBUG_OBJECT (self, "Fixating caps");
+  
+  GST_DEBUG_OBJECT (self, "Fixating src caps from sink caps %" GST_PTR_FORMAT,
+  sink_caps);
+  
+  sink_structure = gst_caps_get_structure (sink_caps, 0);
+
+  if (!gst_structure_get_int (sink_structure, "width", &width)) {
+  GST_ERROR_OBJECT (self, "Width is missing in sink caps");
+  return NULL;
+  }
+  
+  if (!gst_structure_get_int (sink_structure, "height", &height)) {
+  GST_ERROR_OBJECT (self, "Height is missing in sink caps");
+  return NULL;
+  }
+  
+  gst_structure_get_int (sink_structure, "meta-height-before", &meta_height_before);
+  gst_structure_get_int (sink_structure, "meta-height-after", &meta_height_after);
+ 
+  height = height - meta_height_before - meta_height_after;
+  
+  input_format = gst_structure_get_string (sink_structure, "format");
+  if (NULL == input_format) {
+  GST_ERROR_OBJECT (self, "Format is missing in sink caps");
+  return NULL;
+  }
+  
+  vframerate = gst_structure_get_value (sink_structure, "framerate");
+  
+  if (NULL == vframerate) {
+  GST_ERROR_OBJECT (self, "Framerate is missing in sink caps");
+  return NULL;
+  }
+  
+  /* Determine output format based on input format */
+  #if defined(SOC_AM62A)
+  if (NULL != g_strrstr (input_format, "i")) {
+  output_format = "GRAY8";
+  } else
+  #endif
+  {
+  output_format = "NV12";
+  }
+
+  GST_INFO_OBJECT (simo,"FlexConnect fixation: %s (%dx%d) → %s (multiple scales)",
+      input_format, width, height, output_format);
+ 
+  for (l = src_caps_list; l != NULL; l = l->next) {
+    GstCaps *src_caps = (GstCaps *) l->data;
+    GstStructure *src_st = gst_caps_get_structure (src_caps, 0);
+    GstCaps *new_caps = gst_caps_fixate (gst_caps_ref (src_caps));
+    GstStructure *new_st = gst_caps_get_structure (new_caps, 0);
+    const GValue *vwidth = NULL, *vheight = NULL;
+    vwidth = gst_structure_get_value (src_st, "width");
+    vheight = gst_structure_get_value (src_st, "height");
+
+    gst_structure_set_value (new_st, "width", vwidth);
+    gst_structure_set_value (new_st, "height", vheight);
+    gst_structure_set_value (new_st, "framerate", vframerate);
+
+    gst_structure_fixate_field_nearest_int (new_st, "width", width);
+    gst_structure_fixate_field_nearest_int (new_st, "height", height);
+
+    gst_structure_set (new_st, "format", G_TYPE_STRING, output_format, NULL);
+
+    GST_DEBUG_OBJECT (simo, "Fixated %" GST_PTR_FORMAT " into %" GST_PTR_FORMAT,
+        src_caps, new_caps);
+
+    result_caps_list = g_list_append (result_caps_list, new_caps); 
+  }
+  return result_caps_list;
+}
 static gboolean
 gst_tiovx_fc_deinit_module (GstTIOVXMISO * miso)
 {
