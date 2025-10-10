@@ -128,9 +128,6 @@ static const guint postprocess_skip_frames = 1;
 #define MAX_ROI_VALUE G_MAXUINT32
 #define DEFAULT_ROI_VALUE 0
 
-// #define gst_tiovx_fc_parent_class parent_class
-
-
 /* Parameters for VPAV MSC Operations */
 /* Target definition */
 enum
@@ -801,7 +798,7 @@ static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink_%u",
 
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
-    GST_PAD_ALWAYS,
+    GST_PAD_REQUEST,
     GST_STATIC_CAPS (TIOVX_FC_STATIC_CAPS_SRC)
     );  
 
@@ -892,9 +889,6 @@ static const gchar *
 target_id_to_target_name (gint target_id);
 
 static gboolean
-gst_tiovx_fc_release_buffer (GstTIOVXSimo * simo);
-
-static gboolean
 gst_tiovx_fc_deinit_module (GstTIOVXSimo * simo);
 
 static gboolean 
@@ -949,10 +943,9 @@ gst_tiovx_fc_ee_mode_get_type (void)
 static void
 gst_tiovx_fc_class_init(GstTIOVXFCClass * klass)
 {
-
+  GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
   GST_DEBUG_CATEGORY_INIT (gst_tiovxfc_debug, "tiovxfc", 0, "TIOVX FC PLUGIN");
   GST_DEBUG("class_init reached");
-  GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
   GstElementClass *gstelement_class = GST_ELEMENT_CLASS (klass);
   GstTIOVXSimoClass *gsttiovxsimo_class = GST_TIOVX_SIMO_CLASS (klass);
   GstPadTemplate *src_temp = NULL;
@@ -1540,50 +1533,50 @@ gst_tiovx_fc_init_module (GstTIOVXSimo * simo,
         flexconnect->msc_output[0].bufq_depth);
   }
 
-  // for (l = src_pads; l != NULL; l = l->next) {
-  //   GstTIOVXMultiScalerPad *src_pad = (GstTIOVXMultiScalerPad *) l->data;
-  //   gint i = g_list_position (src_pads, l);
+  for (l = src_pads; l != NULL; l = l->next) {
+    GstTIOVXMultiScalerPad *src_pad = (GstTIOVXMultiScalerPad *) l->data;
+    gint i = g_list_position (src_pads, l);
 
-  //   if (src_pad->roi_width == 0) {
-  //     src_pad->roi_width = flexconnect->viss_input.width - src_pad->roi_startx;
-  //   }
+    if (src_pad->roi_width == 0) {
+      src_pad->roi_width = flexconnect->raw_params.width - src_pad->roi_startx;
+    }
 
-  //   if (src_pad->roi_height == 0) {
-  //     src_pad->roi_height = flexconnect->viss_input.height - src_pad->roi_starty;
-  //   }
+    if (src_pad->roi_height == 0) {
+      src_pad->roi_height = flexconnect->raw_params.height - src_pad->roi_starty;
+    }
 
-  //   if (src_pad->roi_startx + src_pad->roi_width > flexconnect->viss_input.width) {
-  //     GST_ERROR_OBJECT (self, "ROI width exceeds the input image");
-  //     ret = FALSE;
-  //     goto out;
-  //   }
+    if (src_pad->roi_startx + src_pad->roi_width > flexconnect->raw_params.width) {
+      GST_ERROR_OBJECT (self, "ROI width exceeds the input image");
+      ret = FALSE;
+      goto out;
+    }
 
-  //   if (src_pad->roi_starty + src_pad->roi_height > flexconnect->viss_input.height) {
-  //     GST_ERROR_OBJECT (self, "ROI height exceeds the input image");
-  //     ret = FALSE;
-  //     goto out;
-  //   }
+    if (src_pad->roi_starty + src_pad->roi_height > flexconnect->raw_params.height) {
+      GST_ERROR_OBJECT (self, "ROI height exceeds the input image");
+      ret = FALSE;
+      goto out;
+    }
 
-  //   if (flexconnect->msc_output[0].width > src_pad->roi_width ||
-  //           flexconnect->msc_output[0].height > src_pad->roi_height) {
-  //     GST_ERROR_OBJECT (self, "self-> does not support upscaling");
-  //     ret = FALSE;
-  //     goto out;
-  //   }
+    if (flexconnect->msc_output[0].width > src_pad->roi_width ||
+            flexconnect->msc_output[0].height > src_pad->roi_height) {
+      GST_ERROR_OBJECT (self, "self-> does not support upscaling");
+      ret = FALSE;
+      goto out;
+    }
 
-  //   if (flexconnect->msc_output[0].width < src_pad->roi_width/4 ||
-  //           flexconnect->msc_output[0].height < src_pad->roi_height/4) {
-  //     GST_ERROR_OBJECT (self,
-  //             "Flexconnect does not support downscaling by a factor > 4");
-  //     ret = FALSE;
-  //     goto out;
-  //   }
+    if (flexconnect->msc_output[0].width < src_pad->roi_width/4 ||
+            flexconnect->msc_output[0].height < src_pad->roi_height/4) {
+      GST_ERROR_OBJECT (self,
+              "Flexconnect does not support downscaling by a factor > 4");
+      ret = FALSE;
+      goto out;
+    }
 
-  //   flexconnect->msc_crop_params[i].crop_start_x = src_pad->roi_startx;
-  //   flexconnect->msc_crop_params[i].crop_start_y = src_pad->roi_starty;
-  //   flexconnect->msc_crop_params[i].crop_width = src_pad->roi_width;
-  //   flexconnect->msc_crop_params[i].crop_height = src_pad->roi_height;
-  // }
+    flexconnect->msc_crop_params[i].crop_start_x = src_pad->roi_startx;
+    flexconnect->msc_crop_params[i].crop_start_y = src_pad->roi_starty;
+    flexconnect->msc_crop_params[i].crop_width = src_pad->roi_width;
+    flexconnect->msc_crop_params[i].crop_height = src_pad->roi_height;
+  }
 
 #if defined(SOC_AM62A) || defined(SOC_J722S)
   if (NULL == g_strrstr (format_str, "i"))
@@ -1678,31 +1671,6 @@ if (flexconnect->fc_params.tivxVissPrms.enable_ir_op) {
 out:    
   return ret;
  
-}
-
-static gboolean
-gst_tiovx_fc_release_buffer (GstTIOVXSimo * simo)
-{
-  GstTIOVXFC *self = NULL;
-  vx_status status = VX_FAILURE;
-  gboolean ret = FALSE;
-
-  g_return_val_if_fail (simo, FALSE);
-
-  self = GST_TIOVX_FC (simo);
-
-  GST_DEBUG_OBJECT (self, "Release buffer ISP");
-  status = tiovx_fc_module_release_buffers (&self->fc_obj);
-  if (VX_SUCCESS != status) {
-    GST_ERROR_OBJECT (self,
-        "Module configure release buffer failed with error: %d", status);
-    goto out;
-  }
-
-  ret = TRUE;
-
-out:
-  return ret;
 }
 
 static gboolean 
