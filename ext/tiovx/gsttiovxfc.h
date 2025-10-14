@@ -49,7 +49,7 @@
  *
  * DISCLAIMER.
  *
- * THIS SOFTWARE IS PROVIDED BY TI AND TI’S LICENSORS "AS IS" AND ANY EXPRESS
+ * THIS SOFTWARE IS PROVItivx_vpac_fc_viss_msc_params_tDED BY TI AND TI’S LICENSORS "AS IS" AND ANY EXPRESS
  * OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
  * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
  * IN NO EVENT SHALL TI AND TI’S LICENSORS BE LIABLE FOR ANY DIRECT, INDIRECT,
@@ -61,28 +61,28 @@
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __GST_TIOVX_ISP_H__
-#define __GST_TIOVX_ISP_H__
+#ifndef __GST_TIOVX_FC_H__
+#define __GST_TIOVX_FC_H__
 
 #include <gst/gst.h>
 #include <TI/tivx.h>
 
 #include "gst-libs/gst/tiovx/gsttiovx.h"
-#include "gst-libs/gst/tiovx/gsttiovxmiso.h"
+#include "gst-libs/gst/tiovx/gsttiovxsimo.h"
 
 G_BEGIN_DECLS
 /**
- * GST_IS_TIOVX_fc:
- * @ptr: pointer to check if it's a TIOVX fc
+ * GST_IS_TIOVX_FC:
+ * @ptr: pointer to check if it's a TIOVX FC
  * 
- * Checks if a pointer is a TIOVX fc
+ * Checks if a pointer is a TIOVX FC
  * 
- * Returns: TRUE if @ptr is a TIOVX fc
+ * Returns: TRUE if @ptr is a TIOVX FC
  * 
  */
-#define GST_TYPE_TIOVX_FC (gst_tiovx_fc_get_type())
+#define GST_TYPE_TIOVX_FC_VISS_MSC (gst_tiovx_fc_get_type())
 G_DECLARE_FINAL_TYPE(GstTIOVXFC, gst_tiovx_fc, GST,
-                     TIOVX_FC, GstTIOVXMiso)
+                     TIOVX_FC, GstTIOVXSimo)
 
 G_END_DECLS
 #endif /* __GST_TIOVX_FC_H__ */
