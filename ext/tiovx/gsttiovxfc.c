@@ -1427,7 +1427,7 @@ gst_tiovx_fc_get_src_caps (GstTIOVXSimo * simo,
   template_caps = gst_static_pad_template_get_caps (&src_template);
 
   if (template_caps != NULL) {
-    g_print("Successfully retrieved capabilities:\n");
+    g_print("Successfully retrieved capabilities\n");
     g_print("The value of template_caps is:  %s\n", gst_caps_to_string(template_caps));
 
     gst_caps_unref(template_caps);
