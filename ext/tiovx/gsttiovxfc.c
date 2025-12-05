@@ -1147,7 +1147,7 @@ static gboolean
 gst_tiovx_fc_configure_module (GstTIOVXSimo * simo)
 {
   GstTIOVXFC *self = NULL;
-  gboolean ret = FALSE;
+  gboolean ret = TRUE;
   vx_status status = VX_FAILURE;
   
   GST_DEBUG_OBJECT (simo, "===================== Entering gst_tiovx_fc_configure_module =====================");
@@ -1157,6 +1157,23 @@ gst_tiovx_fc_configure_module (GstTIOVXSimo * simo)
 
   self = GST_TIOVX_FC (simo);
 
+  if (self->fc_obj.node == NULL) {
+    GST_ERROR_OBJECT (self, "FC node is NULL, cannot configure module");
+    ret = FALSE;
+    goto out;
+  }
+
+  vx_status check_status = vxGetStatus((vx_reference)self->fc_obj.node);
+  if(check_status != VX_SUCCESS) {
+    GST_ERROR_OBJECT (self, "FC node is invalid (status=%d), cannot configure module", check_status);
+    fprintf(stderr, "FC node is invalid (status=%d), cannot configure module\n", check_status);
+    ret = FALSE;
+    goto out;
+  }else
+  {
+    printf("FC node is valid in gstreamer %p\n", self->fc_obj.node);
+  }
+  
   GST_DEBUG_OBJECT (self, "Update filter coeffs");
   status = tiovx_fc_module_update_filter_coeffs (&self->fc_obj);
   if (VX_SUCCESS != status){
@@ -1165,25 +1182,7 @@ gst_tiovx_fc_configure_module (GstTIOVXSimo * simo)
     ret = FALSE;
     goto out;
   }
-
-  GST_DEBUG_OBJECT (self, "Update crop params");
-  status = tiovx_fc_module_update_crop_params (&self->fc_obj);
-  if (VX_SUCCESS != status) {
-    GST_ERROR_OBJECT (self,
-        "Module update crop params failed with error: %d", status);
-    ret = FALSE;
-    goto out;
-  }
-
-  GST_DEBUG_OBJECT (self, "Update input params");
-  status = tiovx_fc_module_update_input_params (&self->fc_obj);
-  if (VX_SUCCESS != status) {
-    GST_ERROR_OBJECT (self,
-        "Module update input params failed with error: %d", status);
-    ret = FALSE;
-    goto out;
-  }
-
+  
   GST_DEBUG_OBJECT (self, "Release buffer scaler");
   status = tiovx_fc_module_release_buffers (&self->fc_obj);
   if (VX_SUCCESS != status) {
@@ -1191,9 +1190,15 @@ gst_tiovx_fc_configure_module (GstTIOVXSimo * simo)
         "Module configure release buffer failed with error: %d", status);
     ret = FALSE;
     goto out;
+  }else
+  {
+    GST_ERROR_OBJECT (self,
+        "Release buffer status: %d\n", status);
   }
 
 out: 
+  GST_ERROR_OBJECT (self,
+          "Configure module ret is: %d\n", ret);
   return ret;
 }
 
@@ -1229,6 +1234,11 @@ gst_tiovx_fc_create_graph ( GstTIOVXSimo * simo, vx_context context,
   if (VX_SUCCESS != status) {
     GST_ERROR_OBJECT (self, "Create graph failed with error: %d", status);
     goto out;
+  }
+  else{
+    GST_INFO_OBJECT (self, "Create graph passed with status: %d", status);
+    fprintf(stderr, "[FC-CREATE-GRAPH] Node created: %p with status: %d\n", 
+                self->fc_obj.node, vxGetStatus((vx_reference)self->fc_obj.node));
   }
 
   GST_DEBUG_OBJECT (self, "Finished creating flexconnect graph");
@@ -1622,148 +1632,275 @@ target_id_to_target_name (gint target_id)
   return value_nick;
 }
 
+// static gboolean
+// gst_tiovx_fc_postprocess (GstTIOVXSimo * simo)
+// {
+//   GstTIOVXFC *self = NULL;
+//   GList *sink_pad = NULL;
+//   GList *l = NULL;
+//   gboolean ret = FALSE;
+//   struct v4l2_control control;
+//   gchar *video_dev = NULL;
+//   vx_map_id h3a_buf_map_id;
+//   vx_map_id aewb_buf_map_id;
+//   gint i = 0;
+
+//   g_return_val_if_fail (simo, FALSE);
+
+//   self = GST_TIOVX_FC (simo);
+//   g_print("isp check 1\n");
+//   sink_pad = GST_ELEMENT (simo)->sinkpads;
+//   g_print("isp check 2\n");
+
+//   if (postprocess_skip_frames >= ++self->postprocess_iter) {
+//     GST_LOG_OBJECT (self, "Skipping postprocess iteration #%d",
+//         self->postprocess_iter);
+//     ret = TRUE;
+//     goto exit;
+//   } else {
+//     self->postprocess_iter = 0;
+//   }
+
+//   for (l = sink_pad, i = 0; l != NULL; l = g_list_next (l), i++) {
+//     GstTIOVXFCPad *sink_pad = (GstTIOVXFCPad *) l->data;
+//     tivx_h3a_data_t *h3a_data = NULL;
+//     tivx_ae_awb_params_t *ae_awb_result = NULL;
+//     int32_t ti_2a_wrapper_ret = 0;
+//     vx_user_data_object h3a_stats_ref = NULL;
+//     vx_user_data_object ae_awb_result_ref = NULL;
+
+//     ae_awb_result_ref =
+//         (vx_user_data_object) vxGetObjectArrayItem (self->
+//         fc_obj.viss_ae_awb_result_arr[0], i);
+//     h3a_stats_ref =
+//         (vx_user_data_object) vxGetObjectArrayItem (self->
+//         fc_obj.viss_h3a_stats_arr[0], i);
+
+//     vxMapUserDataObject (h3a_stats_ref, 0,
+//         sizeof (tivx_h3a_data_t), &h3a_buf_map_id, (void **) &h3a_data,
+//         VX_READ_ONLY, VX_MEMORY_TYPE_HOST, 0);
+//     vxMapUserDataObject (ae_awb_result_ref, 0,
+//         sizeof (tivx_ae_awb_params_t), &aewb_buf_map_id,
+//         (void **) &ae_awb_result, VX_WRITE_ONLY, VX_MEMORY_TYPE_HOST, 0);
+
+//     // if (g_strcmp0 (self->sensor_name, "SENSOR_SONY_IMX390_UB953_D3") == 0) {
+//     //   get_imx390_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
+//     // } else if (g_strcmp0 (self->sensor_name, "SENSOR_OV2312_UB953_LI") == 0) {
+//     //   get_ov2312_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
+//     // } else if (g_strcmp0 (self->sensor_name, "SENSOR_OX05B1S") == 0) {
+//     //   get_ox05b1s_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
+//     // } else if (g_strcmp0 (self->sensor_name, "SENSOR_SONY_IMX728_UB971_D3") == 0) {
+//     //   get_imx728_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
+//     // } else {
+//     //   get_imx219_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
+//     // }
+
+//     get_imx219_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
+
+//     ti_2a_wrapper_ret =
+//         TI_2A_wrapper_process (&sink_pad->ti_2a_wrapper, &sink_pad->aewb_config,
+//         h3a_data, &sink_pad->sensor_in_data, ae_awb_result,
+//         &sink_pad->sensor_out_data);
+//     if (ti_2a_wrapper_ret) {
+//       GST_ERROR_OBJECT (self, "Unable to process TI 2A wrapper: %d",
+//           ti_2a_wrapper_ret);
+//       goto out;
+//     }
+
+//     GST_LOG_OBJECT (sink_pad, "Exposure time output from TI 2A library: %d",
+//         sink_pad->sensor_out_data.aePrms.exposureTime[0]);
+//     GST_LOG_OBJECT (sink_pad, "Analog gain output from TI 2A library: %d",
+//         sink_pad->sensor_out_data.aePrms.analogGain[0]);
+
+//     if (sink_pad->ae_mode == ALGORITHMS_ISS_AE_MANUAL ||
+//         sink_pad->ae_mode == ALGORITHMS_ISS_AE_DISABLED) {
+//       goto out;
+//     }
+
+//     video_dev = sink_pad->videodev;
+//     if (NULL == video_dev) {
+//       GST_LOG_OBJECT (sink_pad,
+//           "Device location was not provided, skipping IOCTL calls");
+//     } else {
+//       gint fd = -1;
+//       int ret_val = -1;
+//       gint32 analog_gain = 0;
+//       gint32 coarse_integration_time = 0;
+
+//       fd = open (video_dev, O_RDWR | O_NONBLOCK);
+//       if (-1 == fd) {
+//         GST_ERROR_OBJECT (self, "Unable to open video device: %s", video_dev);
+//         goto exit;
+//       }
+//       gst_tiovx_fc_map_2A_values (self,
+//           sink_pad->sensor_out_data.aePrms.exposureTime[0],
+//           sink_pad->sensor_out_data.aePrms.analogGain[0],
+//           &coarse_integration_time, &analog_gain);
+
+//       GST_LOG_OBJECT (sink_pad, "%s sensor specific exposure time: %d",
+//           self->sensor_name, coarse_integration_time);
+//       GST_LOG_OBJECT (sink_pad, "%s Sensor specific analog gain: %d",
+//           self->sensor_name, analog_gain);
+
+//       control.id = exposure_ctrl_id;
+//       control.value = coarse_integration_time;
+//       ret_val = ioctl (fd, VIDIOC_S_CTRL, &control);
+//       if (ret_val < 0) {
+//         GST_ERROR_OBJECT (self, "Unable to call exposure ioctl: %d", ret_val);
+//         goto close_fd;
+//       }
+
+//       control.id = analog_gain_ctrl_id;
+//       control.value = analog_gain;
+//       ret_val = ioctl (fd, VIDIOC_S_CTRL, &control);
+//       if (ret_val < 0) {
+//         GST_ERROR_OBJECT (self, "Unable to call analog gain ioctl: %d",
+//             ret_val);
+//       }
+
+//     close_fd:
+//       close (fd);
+//     }
+
+//   out:
+//     vxUnmapUserDataObject (h3a_stats_ref, h3a_buf_map_id);
+//     vxUnmapUserDataObject (ae_awb_result_ref, aewb_buf_map_id);
+
+//     vxReleaseReference ((vx_reference *) & ae_awb_result_ref);
+//     vxReleaseReference ((vx_reference *) & h3a_stats_ref);
+//   }
+
+//   ret = TRUE;
+
+// exit:
+//   return ret;
+// }
+
 static gboolean
 gst_tiovx_fc_postprocess (GstTIOVXSimo * simo)
 {
-  GstTIOVXFC *self = NULL;
-  GList *sink_pad = NULL;
-  GList *l = NULL;
-  gboolean ret = FALSE;
-  struct v4l2_control control;
-  gchar *video_dev = NULL;
-  vx_map_id h3a_buf_map_id;
-  vx_map_id aewb_buf_map_id;
-  gint i = 0;
+    GstTIOVXFC *self = NULL;
+    GList *sink_pad = NULL;
+    GList *l = NULL;
+    gboolean ret = FALSE;
+    struct v4l2_control control;
+    gchar *video_dev = NULL;
+    vx_map_id h3a_buf_map_id;
+    vx_map_id aewb_buf_map_id;
+    gint i = 0;
+    g_return_val_if_fail (simo, FALSE);
+    self = GST_TIOVX_FC (simo);
 
-  g_return_val_if_fail (simo, FALSE);
-
-  self = GST_TIOVX_FC (simo);
-  g_print("isp check 1\n");
-  sink_pad = GST_ELEMENT (simo)->sinkpads;
-  g_print("isp check 2\n");
-
-  if (postprocess_skip_frames >= ++self->postprocess_iter) {
-    GST_LOG_OBJECT (self, "Skipping postprocess iteration #%d",
-        self->postprocess_iter);
-    ret = TRUE;
-    goto exit;
-  } else {
-    self->postprocess_iter = 0;
-  }
-
-  for (l = sink_pad, i = 0; l != NULL; l = g_list_next (l), i++) {
-    GstTIOVXFCPad *sink_pad = (GstTIOVXFCPad *) l->data;
-    tivx_h3a_data_t *h3a_data = NULL;
-    tivx_ae_awb_params_t *ae_awb_result = NULL;
-    int32_t ti_2a_wrapper_ret = 0;
-    vx_user_data_object h3a_stats_ref = NULL;
-    vx_user_data_object ae_awb_result_ref = NULL;
-
-    ae_awb_result_ref =
-        (vx_user_data_object) vxGetObjectArrayItem (self->
-        fc_obj.viss_ae_awb_result_arr[0], i);
-    h3a_stats_ref =
-        (vx_user_data_object) vxGetObjectArrayItem (self->
-        fc_obj.viss_h3a_stats_arr[0], i);
-
-    vxMapUserDataObject (h3a_stats_ref, 0,
-        sizeof (tivx_h3a_data_t), &h3a_buf_map_id, (void **) &h3a_data,
-        VX_READ_ONLY, VX_MEMORY_TYPE_HOST, 0);
-    vxMapUserDataObject (ae_awb_result_ref, 0,
-        sizeof (tivx_ae_awb_params_t), &aewb_buf_map_id,
-        (void **) &ae_awb_result, VX_WRITE_ONLY, VX_MEMORY_TYPE_HOST, 0);
-
-    // if (g_strcmp0 (self->sensor_name, "SENSOR_SONY_IMX390_UB953_D3") == 0) {
-    //   get_imx390_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
-    // } else if (g_strcmp0 (self->sensor_name, "SENSOR_OV2312_UB953_LI") == 0) {
-    //   get_ov2312_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
-    // } else if (g_strcmp0 (self->sensor_name, "SENSOR_OX05B1S") == 0) {
-    //   get_ox05b1s_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
-    // } else if (g_strcmp0 (self->sensor_name, "SENSOR_SONY_IMX728_UB971_D3") == 0) {
-    //   get_imx728_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
-    // } else {
-    //   get_imx219_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
-    // }
-
-    get_imx219_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
-
-    ti_2a_wrapper_ret =
-        TI_2A_wrapper_process (&sink_pad->ti_2a_wrapper, &sink_pad->aewb_config,
-        h3a_data, &sink_pad->sensor_in_data, ae_awb_result,
-        &sink_pad->sensor_out_data);
-    if (ti_2a_wrapper_ret) {
-      GST_ERROR_OBJECT (self, "Unable to process TI 2A wrapper: %d",
-          ti_2a_wrapper_ret);
-      goto out;
-    }
-
-    GST_LOG_OBJECT (sink_pad, "Exposure time output from TI 2A library: %d",
-        sink_pad->sensor_out_data.aePrms.exposureTime[0]);
-    GST_LOG_OBJECT (sink_pad, "Analog gain output from TI 2A library: %d",
-        sink_pad->sensor_out_data.aePrms.analogGain[0]);
-
-    if (sink_pad->ae_mode == ALGORITHMS_ISS_AE_MANUAL ||
-        sink_pad->ae_mode == ALGORITHMS_ISS_AE_DISABLED) {
-      goto out;
-    }
-
-    video_dev = sink_pad->videodev;
-    if (NULL == video_dev) {
-      GST_LOG_OBJECT (sink_pad,
-          "Device location was not provided, skipping IOCTL calls");
-    } else {
-      gint fd = -1;
-      int ret_val = -1;
-      gint32 analog_gain = 0;
-      gint32 coarse_integration_time = 0;
-
-      fd = open (video_dev, O_RDWR | O_NONBLOCK);
-      if (-1 == fd) {
-        GST_ERROR_OBJECT (self, "Unable to open video device: %s", video_dev);
+    GST_LOG_OBJECT (self, "Entering postprocess");
+    sink_pad = GST_ELEMENT (simo)->sinkpads;
+    
+    if (postprocess_skip_frames >= ++self->postprocess_iter) {
+        GST_LOG_OBJECT (self, "Skipping postprocess iteration #%d",
+            self->postprocess_iter);
+        ret = TRUE;
         goto exit;
-      }
-      gst_tiovx_fc_map_2A_values (self,
-          sink_pad->sensor_out_data.aePrms.exposureTime[0],
-          sink_pad->sensor_out_data.aePrms.analogGain[0],
-          &coarse_integration_time, &analog_gain);
-
-      GST_LOG_OBJECT (sink_pad, "%s sensor specific exposure time: %d",
-          self->sensor_name, coarse_integration_time);
-      GST_LOG_OBJECT (sink_pad, "%s Sensor specific analog gain: %d",
-          self->sensor_name, analog_gain);
-
-      control.id = exposure_ctrl_id;
-      control.value = coarse_integration_time;
-      ret_val = ioctl (fd, VIDIOC_S_CTRL, &control);
-      if (ret_val < 0) {
-        GST_ERROR_OBJECT (self, "Unable to call exposure ioctl: %d", ret_val);
-        goto close_fd;
-      }
-
-      control.id = analog_gain_ctrl_id;
-      control.value = analog_gain;
-      ret_val = ioctl (fd, VIDIOC_S_CTRL, &control);
-      if (ret_val < 0) {
-        GST_ERROR_OBJECT (self, "Unable to call analog gain ioctl: %d",
-            ret_val);
-      }
-
-    close_fd:
-      close (fd);
+    } else {
+        self->postprocess_iter = 0;
     }
 
-  out:
-    vxUnmapUserDataObject (h3a_stats_ref, h3a_buf_map_id);
-    vxUnmapUserDataObject (ae_awb_result_ref, aewb_buf_map_id);
+    if (self->fc_obj.viss_ae_awb_result_arr == NULL || 
+        self->fc_obj.viss_h3a_stats_arr == NULL) {
+        GST_WARNING_OBJECT(self, "AEWB arrays not initialized, skipping postprocessing");
+        ret = TRUE;
+        goto exit;
+    }
+    
+    GST_DEBUG_OBJECT(self, "AE AWB result array: %p, H3A stats array: %p", 
+                    self->fc_obj.viss_ae_awb_result_arr[0], 
+                    self->fc_obj.viss_h3a_stats_arr[0]);
 
-    vxReleaseReference ((vx_reference *) & ae_awb_result_ref);
-    vxReleaseReference ((vx_reference *) & h3a_stats_ref);
-  }
+    for (l = sink_pad, i = 0; l != NULL; l = g_list_next (l), i++) {
+        GstTIOVXFCPad *sink_pad = (GstTIOVXFCPad *) l->data;
+        tivx_h3a_data_t *h3a_data = NULL;
+        tivx_ae_awb_params_t *ae_awb_result = NULL;
+        int32_t ti_2a_wrapper_ret = 0;
+        vx_user_data_object h3a_stats_ref = NULL;
+        vx_user_data_object ae_awb_result_ref = NULL;
 
-  ret = TRUE;
+        if (self->fc_obj.viss_ae_awb_result_arr[0] == NULL) {
+            GST_WARNING_OBJECT(self, "AE AWB result array is NULL");
+            continue;
+        }
+        
+        if (self->fc_obj.viss_h3a_stats_arr[0] == NULL) {
+            GST_WARNING_OBJECT(self, "H3A stats array is NULL");
+            continue;
+        }
+        
+        ae_awb_result_ref =
+            (vx_user_data_object) vxGetObjectArrayItem (self->
+            fc_obj.viss_ae_awb_result_arr[0], i);
+        
+        if (ae_awb_result_ref == NULL || vxGetStatus((vx_reference)ae_awb_result_ref) != VX_SUCCESS) {
+            GST_WARNING_OBJECT(self, "Failed to get AE AWB result reference for channel %d", i);
+            continue;
+        }
+        
+        h3a_stats_ref =
+            (vx_user_data_object) vxGetObjectArrayItem (self->
+            fc_obj.viss_h3a_stats_arr[0], i);
+            
+        if (h3a_stats_ref == NULL || vxGetStatus((vx_reference)h3a_stats_ref) != VX_SUCCESS) {
+            GST_WARNING_OBJECT(self, "Failed to get H3A stats reference for channel %d", i);
+            vxReleaseReference((vx_reference*)&ae_awb_result_ref);
+            continue;
+        }
 
+        // Try to map the references
+        vx_status status = vxMapUserDataObject(h3a_stats_ref, 0,
+            sizeof(tivx_h3a_data_t), &h3a_buf_map_id, (void **)&h3a_data,
+            VX_READ_ONLY, VX_MEMORY_TYPE_HOST, 0);
+            
+        if (status != VX_SUCCESS) {
+            GST_WARNING_OBJECT(self, "Failed to map H3A stats user data object: %d", status);
+            vxReleaseReference((vx_reference*)&ae_awb_result_ref);
+            vxReleaseReference((vx_reference*)&h3a_stats_ref);
+            continue;
+        }
+        
+        status = vxMapUserDataObject(ae_awb_result_ref, 0,
+            sizeof(tivx_ae_awb_params_t), &aewb_buf_map_id,
+            (void **)&ae_awb_result, VX_WRITE_ONLY, VX_MEMORY_TYPE_HOST, 0);
+            
+        if (status != VX_SUCCESS) {
+            GST_WARNING_OBJECT(self, "Failed to map AE AWB result user data object: %d", status);
+            vxUnmapUserDataObject(h3a_stats_ref, h3a_buf_map_id);
+            vxReleaseReference((vx_reference*)&ae_awb_result_ref);
+            vxReleaseReference((vx_reference*)&h3a_stats_ref);
+            continue;
+        }
+
+        get_imx219_ae_dyn_params (&sink_pad->sensor_in_data.ae_dynPrms);
+        
+        ti_2a_wrapper_ret =
+            TI_2A_wrapper_process (&sink_pad->ti_2a_wrapper, &sink_pad->aewb_config,
+                h3a_data, &sink_pad->sensor_in_data, ae_awb_result,
+                &sink_pad->sensor_out_data);
+        
+        if (ti_2a_wrapper_ret) {
+            GST_ERROR_OBJECT (self, "Unable to process TI 2A wrapper: %d",
+                ti_2a_wrapper_ret);
+            vxUnmapUserDataObject(h3a_stats_ref, h3a_buf_map_id);
+            vxUnmapUserDataObject(ae_awb_result_ref, aewb_buf_map_id);
+            vxReleaseReference((vx_reference*)&ae_awb_result_ref);
+            vxReleaseReference((vx_reference*)&h3a_stats_ref);
+            continue;
+        }
+        
+        vxUnmapUserDataObject(h3a_stats_ref, h3a_buf_map_id);
+        vxUnmapUserDataObject(ae_awb_result_ref, aewb_buf_map_id);
+        vxReleaseReference((vx_reference*)&ae_awb_result_ref);
+        vxReleaseReference((vx_reference*)&h3a_stats_ref);
+    }
+    
+    ret = TRUE;
 exit:
-  return ret;
+    return ret;
 }
 
 static int32_t
@@ -2125,7 +2262,7 @@ GList * src_caps_list, guint num_channels)
         /* Configure MSC outputs - route IR output to MSC output 0 */
         GST_DEBUG_OBJECT (self, "Configuring MSC outputs for IR");
         for (int i = 6; i <= 10; i++) {
-            flexconnect->msc_output_select[i] = TIOVX_FC_MODULE_OUTPUT_NA;
+            flexconnect->msc_output_select[i] = TIOVX_FC_MODULE_OUTPUT_EN;
             GST_DEBUG_OBJECT (self, "Number of outputs enabled for IR operation: %d", i);
 
         }
@@ -2239,7 +2376,7 @@ gst_tiovx_fc_get_node_info (GstTIOVXSimo * simo, vx_node * node,
   GstTIOVXFC *self = NULL;
   GList *l = NULL;
   // GstTIOVXQueueable *queueable_object = NULL;
-  // gint graph_parameter_index = 0;
+  gint graph_parameter_index = 0;
 
   GST_DEBUG_OBJECT (simo, "=====================Entering gst_tiovx_fc_get_node_info=====================");
   
@@ -2252,6 +2389,8 @@ gst_tiovx_fc_get_node_info (GstTIOVXSimo * simo, vx_node * node,
   GST_DEBUG_OBJECT (simo, "Cast to GstTIOVXFC successful");
   
   *node = self->fc_obj.node;
+  fprintf(stderr, "[FC-GET-NODE-INFO] Assigning node: %p with status: %d\n", 
+            *node, vxGetStatus((vx_reference)*node));
   GST_DEBUG_OBJECT (simo, "Node assigned: %p", *node);
   
   /* Set input parameters */
