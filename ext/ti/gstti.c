@@ -76,6 +76,10 @@
 #include "gsttidlpostproc.h"
 #endif
 
+#if defined(TVM_PLUGINS)
+#include "gsttitvm.h"
+#endif
+
 /* entry point to initialize the plug-in
  * initialize the plug-in itself
  * register the element factories and other features
@@ -112,7 +116,6 @@ ti_init (GstPlugin * plugin)
     GST_ERROR ("Failed to register the timosaic element");
     goto out;
   }
-
 #if defined(DL_PLUGINS)
   ret = gst_element_register (plugin, "tidlpreproc", GST_RANK_NONE,
       GST_TYPE_TI_DL_PRE_PROC);
@@ -136,6 +139,22 @@ ti_init (GstPlugin * plugin)
   }
 #endif
 
+#if defined(TVM_PLUGINS)
+  ret = gst_element_register (plugin, "titvm", GST_RANK_NONE, GST_TYPE_TI_TVM);
+  if (!ret) {
+    GST_ERROR ("Failed to register the titvm element");
+    goto out;
+  }
+#endif
+
+#if defined(TVM_PLUGINS)
+  ret = gst_element_register (plugin, "titvm", GST_RANK_NONE, GST_TYPE_TI_TVM);
+  if (!ret) {
+    GST_ERROR ("Failed to register the titvm element");
+    goto out;
+  }
+#endif
+
   ret = TRUE;
 
 out:
@@ -143,5 +162,5 @@ out:
 }
 
 GST_PLUGIN_DEFINE (GST_VERSION_MAJOR, GST_VERSION_MINOR, ti,
-    "GStreamer plugin for TI devices", ti_init, PACKAGE_VERSION, "Proprietary",
-    GST_PACKAGE_NAME, "http://ti.com")
+    "GStreamer plugin for TI devices", ti_init,
+    PACKAGE_VERSION, "Proprietary", GST_PACKAGE_NAME, "http://ti.com")

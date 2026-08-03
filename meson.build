@@ -35,15 +35,54 @@ if SOC == ''
   error('MESON_FAIL SOC not set.')
 endif
 
-# TI dependencies
-imaging_deps = dependency('imaging')
-tiovx_deps = dependency('tiovx')
-ti_vision_apps_dep = dependency('ti_vision_apps')
-edgeai_tiovx_modules_dep = dependency('edgeai_tiovx_modules')
-edgeai_tiovx_kernels_dep = dependency('edgeai_tiovx_kernels')
-ti_stereo_perception_dep = dependency('ti_stereo_perception')
-edgeai_dl_inferer_dep = dependency('edgeai_dl_inferer')
-edgeai_apps_utils_dep = dependency('edgeai_apps_utils')
+# TI dependencies — only pull in what the SOC actually has
+# imaging/tiovx/vision_apps/tiovx_modules/tiovx_kernels: j-series + am62a only
+# ti_stereo_perception: j-series only (no am62a/am62x/am62p/am62dxx)
+# edgeai_dl_inferer: needed when dl-plugins or tvm-plugins is enabled
+# edgeai_apps_utils: all SOCs
+
+if SOC == 'j721e' or SOC == 'j721s2' or SOC == 'j784s4' or SOC == 'j742s2' or SOC == 'j722s' or SOC == 'am62a'
+  imaging_deps             = dependency('imaging')
+  tiovx_deps               = dependency('tiovx')
+  ti_vision_apps_dep       = dependency('ti_vision_apps')
+  edgeai_tiovx_modules_dep = dependency('edgeai_tiovx_modules')
+  edgeai_tiovx_kernels_dep = dependency('edgeai_tiovx_kernels')
+  edgeai_apps_utils_dep = dependency('edgeai_apps_utils')
+else
+  imaging_deps             = declare_dependency()
+  tiovx_deps               = declare_dependency()
+  ti_vision_apps_dep       = declare_dependency()
+  edgeai_tiovx_modules_dep = declare_dependency()
+  edgeai_tiovx_kernels_dep = declare_dependency()
+  edgeai_apps_utils_dep    = declare_dependency()
+endif
+
+if SOC == 'j721e' or SOC == 'j721s2' or SOC == 'j784s4' or SOC == 'j722s'
+  ti_stereo_perception_dep = dependency('ti_stereo_perception')
+else
+  ti_stereo_perception_dep = declare_dependency()
+endif
+
+if get_option('dl-plugins').enabled()
+  edgeai_dl_inferer_dep = dependency('edgeai_dl_inferer')
+else
+  edgeai_dl_inferer_dep = declare_dependency()
+endif
+
+# tvm-plugins on am62dxx: TVM headers and libtvm_runtime are already installed
+# in the rootfs image — no edgeai_dl_inferer needed
+if get_option('tvm-plugins').enabled()
+  tvm_runtime_lib = c.find_library('tvm_runtime', required : true)
+  tvm_dep = declare_dependency(
+    include_directories : [
+      include_directories('/usr/include/tvm/tvm/include'),
+      include_directories('/usr/include/tvm/tvm/3rdparty/dmlc-core/include'),
+      include_directories('/usr/include/tvm/tvm/3rdparty/dlpack/include'),
+    ],
+    dependencies : [tvm_runtime_lib]
+  )
+  plugin_deps += [tvm_dep]
+endif
 
 
 # Find TIOVX dependencies and headers
@@ -67,6 +106,15 @@ if get_option('dl-plugins').enabled()
   plugin_deps += [
    edgeai_dl_inferer_dep,
    ]
+endif
+
+# tvm-plugins: titvm element — uses edgeai_dl_inferer pkg-config which already
+# pulls in tvm headers and libtvm_runtime, so no extra library needed here
+if get_option('tvm-plugins').enabled()
+  if SOC != 'am62dxx'
+    error('MESON_FAIL tvm-plugins is only supported on am62dxx (got SOC=', SOC, ')')
+  endif
+  plugin_deps += [edgeai_dl_inferer_dep]
 endif
 
 if SOC == 'j721e' or SOC == 'j721s2' or SOC == 'j784s4' or SOC == 'j742s2' or SOC == 'j722s' or SOC == 'am62a'
@@ -191,16 +239,23 @@ elif SOC == 'am62x'
 elif SOC == 'am62p'
   c_args += ['-DSOC_AM62P']
   c_args += ['-DTARGET_CPU_A53']
+elif SOC == 'am62dxx'
+  c_args += ['-DSOC_AM62D']
+  c_args += ['-DTARGET_CPU_A53']
 else
   error('MESON_FAIL SOC =', SOC, 'Not supported')
 endif
 
-if get_option('dl-plugins').enabled()
+if get_option('dl-plugins').enabled() and SOC != 'am62dxx'
   c_args += ['-DDL_PLUGINS']
 endif
 
-if get_option('enable-tidl').enabled() and SOC != 'am62x' and SOC != 'am62p'
+if get_option('enable-tidl').enabled() and SOC != 'am62x' and SOC != 'am62p' and SOC != 'am62dxx'
   c_args += ['-DENABLE_TIDL']
+endif
+
+if get_option('tvm-plugins').enabled() and SOC == 'am62dxx'
+  c_args += ['-DTVM_PLUGINS']
 endif
 
 cpp_args = c_args
